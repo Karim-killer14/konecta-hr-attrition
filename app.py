@@ -3,22 +3,26 @@ import pandas as pd
 import numpy as np
 import pickle
 import os
+from joblib import load as joblib_load
 
 # --------------------------
 # Paths to your pkl files
 # --------------------------
-MODEL_PATH = "HR_Attrition_Model_BalancedRF_20251023.pkl"
+MODEL_PATH = "HR_Attrition_Model_BalancedRF_20251023.joblib"
 FEATURES_PATH = "HR_Model_Features_20251023.pkl"
 
 @st.cache_resource
 def load_model():
-    """Load the trained model from pickle."""
     if not os.path.exists(MODEL_PATH):
         st.error(f"Model file not found at {MODEL_PATH}. "
                  f"Make sure it is in the same folder as this app.")
         return None
-    with open(MODEL_PATH, "rb") as f:
-        model = pickle.load(f)
+    try:
+        model = joblib_load(MODEL_PATH)
+    except Exception as e:
+        st.error("Error loading model file.")
+        st.exception(e)
+        return None
     return model
 
 @st.cache_resource
