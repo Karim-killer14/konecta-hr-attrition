@@ -1,205 +1,136 @@
+# streamlit_app.py
+
 import streamlit as st
 import pandas as pd
 import numpy as np
+from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+from imblearn.over_sampling import SMOTE, ADASYN, BorderlineSMOTE
+from imblearn.ensemble import BalancedRandomForestClassifier
+import matplotlib.pyplot as plt
+import seaborn as sns
 import pickle
-import os
-from joblib import load as joblib_load
+from datetime import datetime
+import warnings
+warnings.filterwarnings('ignore')
 
-# --------------------------
-# Paths to your pkl files
-# --------------------------
-MODEL_PATH = "HR_Attrition_Model_BalancedRF_20251023.joblib"
-FEATURES_PATH = "HR_Model_Features_20251023.pkl"
+st.set_page_config(page_title="HR Attrition Training Dashboard", layout="wide")
 
-@st.cache_resource
-def load_model():
-    if not os.path.exists(MODEL_PATH):
-        st.error(f"Model file not found at {MODEL_PATH}. "
-                 f"Make sure it is in the same folder as this app.")
-        return None
-    try:
-        model = joblib_load(MODEL_PATH)
-    except Exception as e:
-        st.error("Error loading model file.")
-        st.exception(e)
-        return None
-    return model
+st.title("🎯 HR Attrition Model - Full Training Dashboard")
+st.markdown("This app runs the complete Week 3 training pipeline and displays all results interactively.")
 
-@st.cache_resource
-def load_feature_list():
-    """Load the feature names used by the model."""
-    if not os.path.exists(FEATURES_PATH):
-        st.error(f"Features file not found at {FEATURES_PATH}. "
-                 f"Make sure it is in the same folder as this app.")
-        return None
-    with open(FEATURES_PATH, "rb") as f:
-        features = pickle.load(f)
-    # If this is a dict or something else, adapt here:
-    if isinstance(features, dict) and "features" in features:
-        features = features["features"]
-    return list(features)
+# ========================
+# SIDEBAR CONFIGURATION
+# ========================
+st.sidebar.header("Configuration")
+REPLACEMENT_COST = st.sidebar.number_input("Replacement Cost (EGP)", value=90000)
+INTERVENTION_COST = st.sidebar.number_input("Intervention Cost (EGP)", value=5000)
+RETENTION_SUCCESS_RATE = st.sidebar.slider("Retention Success Rate", 0.0, 1.0, 0.5)
 
-def build_input_ui(feature_names):
-    """
-    Build Streamlit UI for inputting employee data.
-    Supports:
-      - Manual input
-      - Paste record (CSV, TSV, dict/JSON)
-    Only model-relevant features are kept; extra columns are ignored.
-    """
-    import streamlit as st
-    import pandas as pd
-    import io, ast
+uploaded_file = st.sidebar.file_uploader("Upload Final Payroll CSV", type=["csv"])
 
-    st.subheader("Employee Information")
+run_button = st.sidebar.button("🚀 Run Full Training Pipeline")
 
-    # Choose input method
-    input_method = st.radio("Select input method:", ["Manual input", "Paste record (CSV/TSV/Dict)"])
+# ========================
+# MAIN PIPELINE
+# ========================
+if run_button and uploaded_file:
+    st.info("Running full training pipeline... This may take a few minutes.")
 
-    if input_method == "Manual input":
-        input_data = {}
-        for feat in feature_names:
-            # Default numeric input; adapt to categorical if needed
-            input_data[feat] = st.number_input(feat, value=0.0)
-        row_df = pd.DataFrame([input_data], columns=feature_names)
+    df = pd.read_csv(uploaded_file)
 
-    else:
-        record_text = st.text_area(
-            "Paste your record here (single-row CSV, TSV, or dict/JSON format):",
-            height=150
-        )
-        row_df = pd.DataFrame(columns=feature_names)
+    drop_cols = [
+        'Employee_ID', 'National_ID', 'Insurance_Number', 'Email', 'Mobile',
+        'Starting_Date', 'Last_Working_Date', 'Attrition_Probability',
+        'Job_Title', 'Department', 'Tenure_Category', 'Age_Category', 
+        'Salary_Category', 'Education_Level', 'Marital_Status', 'Gender',
+        'Working_Conditions'
+    ]
 
-        if record_text:
-            parsed = False
+    target = "Attrition"
+    X = df.drop(columns=[target] + drop_cols, errors='ignore')
+    y = df[target]
 
-            # 1️⃣ Try dict/JSON input
-            try:
-                data_dict = ast.literal_eval(record_text)
-                if isinstance(data_dict, dict):
-                    filtered_dict = {k: v for k, v in data_dict.items() if k in feature_names}
-                    missing_features = [f for f in feature_names if f not in filtered_dict]
-                    for f in missing_features:
-                        filtered_dict[f] = 0  # default missing numeric features
-                    row_df = pd.DataFrame([filtered_dict], columns=feature_names)
-                    parsed = True
-            except Exception:
-                pass
+    categorical_cols = X.select_dtypes(include=['object']).columns.tolist()
+    if len(categorical_cols) > 0:
+        X = pd.get_dummies(X, columns=categorical_cols, drop_first=True)
 
-            # 2️⃣ Try CSV/TSV single row
-            if not parsed:
-                try:
-                    lines = [line.strip() for line in record_text.strip().splitlines() if line.strip()]
-                    if len(lines) == 1:
-                        sep = "\t" if "\t" in lines[0] else ","
-                        values = [v.strip() for v in lines[0].split(sep)]
-                        if len(values) >= len(feature_names):
-                            # Keep only last N values corresponding to model features
-                            numeric_values = values[-len(feature_names):]
-                            row_df = pd.DataFrame([numeric_values], columns=feature_names)
-                            parsed = True
-                        else:
-                            st.error(f"Not enough values to fill model features ({len(values)} provided, {len(feature_names)} required)")
-                    else:
-                        st.error("Multiple lines detected. Only single-row input is supported.")
-                except Exception as e:
-                    st.error("Failed to parse CSV/TSV record.")
-                    st.exception(e)
+    X.columns = X.columns.str.replace('[\\[\\]<>() ]', '_', regex=True)
 
-            if not parsed:
-                st.error("Failed to parse the record. Make sure it's a valid single-row CSV, TSV, or dictionary format.")
+    X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+    X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42, stratify=y_temp)
 
-            # Convert numeric columns to float; keep categorical as string
-            if not row_df.empty:
-                for col in row_df.columns:
-                    try:
-                        row_df[col] = pd.to_numeric(row_df[col])
-                    except Exception:
-                        pass
+    samplers = {
+        'SMOTE': SMOTE(random_state=42, k_neighbors=3),
+        'ADASYN': ADASYN(random_state=42, n_neighbors=3),
+        'BorderlineSMOTE': BorderlineSMOTE(random_state=42, k_neighbors=3)
+    }
 
-            # Preview
-            if not row_df.empty:
-                with st.expander("Preview input DataFrame"):
-                    st.dataframe(row_df)
+    quick_model = XGBClassifier(n_estimators=100, max_depth=3, random_state=42, eval_metric='logloss', verbosity=0)
+    best_sampler_name = max(samplers, key=lambda s: roc_auc_score(y_val, quick_model.fit(*samplers[s].fit_resample(X_train, y_train)).predict_proba(X_val)[:,1]))
+    best_sampler = samplers[best_sampler_name]
 
-    return row_df
+    X_train_balanced, y_train_balanced = best_sampler.fit_resample(X_train, y_train)
 
+    models = {
+        'XGBoost': XGBClassifier(n_estimators=300, max_depth=5, learning_rate=0.05, random_state=42, eval_metric='logloss'),
+        'LightGBM': LGBMClassifier(n_estimators=300, max_depth=5, learning_rate=0.05, random_state=42),
+        'BalancedRF': BalancedRandomForestClassifier(n_estimators=300, max_depth=10, random_state=42)
+    }
 
+    results = {}
+    for name, model in models.items():
+        model.fit(X_train_balanced if name != 'BalancedRF' else X_train, y_train_balanced if name != 'BalancedRF' else y_train)
+        prob = model.predict_proba(X_val)[:,1]
+        results[name] = roc_auc_score(y_val, prob)
 
+    best_model_name = max(results, key=results.get)
+    best_model = models[best_model_name]
 
-def main():
-    st.set_page_config(
-        page_title="HR Attrition Prediction",
-        page_icon="📊",
-        layout="centered"
-    )
+    y_val_prob = best_model.predict_proba(X_val)[:,1]
+    thresholds = np.arange(0.1, 0.9, 0.05)
+    roi_scores = []
+    for t in thresholds:
+        y_pred = (y_val_prob >= t).astype(int)
+        cm = confusion_matrix(y_val, y_pred)
+        tp = cm[1,1] if cm.shape[0]>1 else 0
+        fp = cm[0,1] if cm.shape[0]>1 else 0
+        total_leavers = y_val.sum()
+        cost_baseline = total_leavers * REPLACEMENT_COST
+        cost_interventions = (tp + fp) * INTERVENTION_COST
+        employees_saved = int(tp * RETENTION_SUCCESS_RATE)
+        cost_replacements = (total_leavers - employees_saved) * REPLACEMENT_COST
+        cost_with_model = cost_interventions + cost_replacements
+        roi = ((cost_baseline - cost_with_model) / cost_with_model) if cost_with_model > 0 else 0
+        roi_scores.append(roi)
 
-    st.title("📊 HR Attrition Prediction App")
-    st.write(
-        """
-        This app uses a trained machine learning model to predict the **likelihood of employee attrition**.
-        
-        1. Fill in the employee details below  
-        2. Click **Predict Attrition**  
-        3. View the predicted probability and label
-        """
-    )
+    optimal_threshold = thresholds[np.argmax(roi_scores)]
 
-    model = load_model()
-    feature_names = load_feature_list()
+    y_test_prob = best_model.predict_proba(X_test)[:,1]
+    y_test_pred = (y_test_prob >= optimal_threshold).astype(int)
 
-    if model is None or feature_names is None:
-        st.stop()
+    st.subheader("📊 Final Model Results")
+    st.write(f"Best Model: {best_model_name}")
+    st.write(f"Optimal Threshold: {optimal_threshold:.2f}")
+    st.write(f"ROC-AUC: {roc_auc_score(y_test, y_test_prob):.3f}")
+    st.write(f"Recall: {recall_score(y_test, y_test_pred):.2%}")
 
-    # Sidebar info
-    st.sidebar.header("About")
-    st.sidebar.info(
-        """
-        - Model: Balanced Random Forest  
-        - Files:
-            - `HR_Attrition_Model_BalancedRF_20251023.pkl`  
-            - `HR_Model_Features_20251023.pkl`
-        """
-    )
+    cm = confusion_matrix(y_test, y_test_pred)
+    fig, ax = plt.subplots()
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
+    st.pyplot(fig)
 
-    # Build the UI for feature input
-    with st.form("attrition_form"):
-        input_df = build_input_ui(feature_names)
+    # Save model
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    with open(f"HR_Attrition_Model_{timestamp}.pkl", "wb") as f:
+        pickle.dump(best_model, f)
 
-        submitted = st.form_submit_button("Predict Attrition")
+    with open(f"HR_Model_Features_{timestamp}.pkl", "wb") as f:
+        pickle.dump(X.columns.tolist(), f)
 
-    if submitted:
-        with st.spinner("Running prediction..."):
-            try:
-                # If your model has a preprocessing pipeline inside, this
-                # should work directly. Otherwise, apply your preprocessing here.
-                if hasattr(model, "predict_proba"):
-                    proba = model.predict_proba(input_df)[0]
-                    # Assuming binary [No, Yes] order. Adjust index if reversed.
-                    attrition_prob = float(proba[1])
-                else:
-                    # If no predict_proba, use decision_function or predict
-                    pred_raw = model.predict(input_df)[0]
-                    # Fake probability from decision_function or treat as label
-                    attrition_prob = float(pred_raw)
+    st.success("✅ Training and artifacts saved successfully")
 
-                pred_label = "Yes" if attrition_prob >= 0.5 else "No"
-
-                st.subheader("Prediction Result")
-                st.metric("Attrition Predicted", pred_label)
-                st.progress(int(attrition_prob * 100))
-                st.write(f"Estimated probability of attrition: **{attrition_prob:.2%}**")
-
-                with st.expander("Show raw input and model-ready data"):
-                    st.write("Input DataFrame sent to model:")
-                    st.dataframe(input_df)
-
-            except Exception as e:
-                st.error("An error occurred during prediction.")
-                st.exception(e)
-
-    st.markdown("---")
-    st.caption("Built with Streamlit · HR Attrition Demo")
-
-if __name__ == "__main__":
-    main()
+else:
+    st.warning("Upload dataset and click Run to start training")
