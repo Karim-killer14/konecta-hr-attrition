@@ -50,45 +50,12 @@ def build_input_ui(feature_names):
     """
     st.subheader("Employee Information")
 
-    # Container to collect raw values
     input_data = {}
 
-    # Example mapping: adjust based on your project
-    # You can add if/elif by feature name or use patterns.
     for feat in feature_names:
-        # Simple heuristic to decide widget type
-        lower = feat.lower()
+        # simple numeric inputs for everything
+        input_data[feat] = st.number_input(feat, value=0.0)
 
-        # Example for common HR fields – tweak/remove as needed
-        if "age" in lower:
-            input_data[feat] = st.number_input(feat, min_value=18, max_value=70, value=30)
-        elif "income" in lower or "salary" in lower:
-            input_data[feat] = st.number_input(feat, min_value=0, max_value=1_000_000, value=5000)
-        elif "distance" in lower:
-            input_data[feat] = st.number_input(feat, min_value=0, max_value=100, value=10)
-        elif "years" in lower or "tenure" in lower:
-            input_data[feat] = st.number_input(feat, min_value=0, max_value=40, value=3)
-        elif "overtime" in lower:
-            input_data[feat] = st.selectbox(feat, ["No", "Yes"])
-        elif "gender" in lower:
-            input_data[feat] = st.selectbox(feat, ["Male", "Female"])
-        elif "marital" in lower:
-            input_data[feat] = st.selectbox(feat, ["Single", "Married", "Divorced"])
-        elif "education" in lower:
-            input_data[feat] = st.selectbox(feat, ["Below College", "College", "Bachelor", "Master", "Doctor"])
-        elif "travel" in lower:
-            input_data[feat] = st.selectbox(feat, ["Non-Travel", "Travel_Rarely", "Travel_Frequently"])
-        elif "jobrole" in lower or "role" in lower:
-            input_data[feat] = st.text_input(feat, "Sales Executive")
-        elif "department" in lower:
-            input_data[feat] = st.selectbox(feat, ["Sales", "Research & Development", "Human Resources"])
-        elif "satisfaction" in lower or "rating" in lower or "score" in lower:
-            input_data[feat] = st.slider(feat, min_value=1, max_value=5, value=3)
-        else:
-            # Fallback: numeric input, you can change this to text_input
-            input_data[feat] = st.text_input(feat, "")
-
-    # Convert dictionary to DataFrame with a single row
     row_df = pd.DataFrame([input_data], columns=feature_names)
     return row_df
 
