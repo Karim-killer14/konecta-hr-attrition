@@ -41,23 +41,48 @@ def load_feature_list():
 
 def build_input_ui(feature_names):
     """
-    Create Streamlit widgets for all features and return
-    a single-row DataFrame in the correct column order.
-    
-    🔴 IMPORTANT:
-    Update this function so the widget types & default values
-    match your actual feature set and preprocessing.
+    Create Streamlit widgets for all features OR allow pasting a record.
+    Returns a single-row DataFrame in the correct column order.
     """
     st.subheader("Employee Information")
 
-    input_data = {}
+    # Let user choose input method
+    input_method = st.radio("Select input method:", ["Manual input", "Paste record (CSV/JSON/dict)"])
 
-    for feat in feature_names:
-        # simple numeric inputs for everything
-        input_data[feat] = st.number_input(feat, value=0.0)
+    if input_method == "Manual input":
+        input_data = {}
+        for feat in feature_names:
+            # simple numeric inputs for everything
+            input_data[feat] = st.number_input(feat, value=0.0)
+        row_df = pd.DataFrame([input_data], columns=feature_names)
 
-    row_df = pd.DataFrame([input_data], columns=feature_names)
+    else:  # Paste record
+        record_text = st.text_area(
+            "Paste your record here (CSV row, JSON, or Python dict format):",
+            height=150
+        )
+        row_df = pd.DataFrame(columns=feature_names)  # default empty
+
+        if record_text:
+            try:
+                # Try parsing as JSON/dict first
+                import ast
+                data_dict = ast.literal_eval(record_text)
+                if isinstance(data_dict, dict):
+                    row_df = pd.DataFrame([data_dict], columns=feature_names)
+                else:
+                    st.error("Record should be a dictionary (key: value pairs).")
+            except Exception:
+                try:
+                    # Try parsing as CSV row
+                    import io
+                    row_df = pd.read_csv(io.StringIO(record_text), names=feature_names)
+                except Exception as e:
+                    st.error("Failed to parse record. Make sure it's a CSV row or dictionary.")
+                    st.exception(e)
+
     return row_df
+
 
 def main():
     st.set_page_config(
