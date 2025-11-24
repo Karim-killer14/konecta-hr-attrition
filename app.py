@@ -41,65 +41,89 @@ def load_feature_list():
 
 def build_input_ui(feature_names):
     """
-    Create Streamlit widgets for feature input or allow pasting a record.
-    Returns a single-row DataFrame in the correct column order.
+    Build Streamlit UI for inputting employee data.
+    Supports:
+      - Manual input
+      - Paste record (CSV, TSV, dict/JSON)
+    Only model-relevant features are kept; extra columns are ignored.
     """
+    import streamlit as st
+    import pandas as pd
+    import io, ast
+
     st.subheader("Employee Information")
 
-    # Let user choose input method
+    # Choose input method
     input_method = st.radio("Select input method:", ["Manual input", "Paste record (CSV/TSV/Dict)"])
 
     if input_method == "Manual input":
         input_data = {}
         for feat in feature_names:
-            # numeric input by default; you can adapt types here
+            # Default numeric input; adapt to categorical if needed
             input_data[feat] = st.number_input(feat, value=0.0)
         row_df = pd.DataFrame([input_data], columns=feature_names)
 
-    else:  # Paste record
+    else:
         record_text = st.text_area(
-            "Paste your record here (CSV row, Tab-separated row, or Python dict/JSON format):",
+            "Paste your record here (single-row CSV, TSV, or dict/JSON format):",
             height=150
         )
-        row_df = pd.DataFrame(columns=feature_names)  # default empty
+        row_df = pd.DataFrame(columns=feature_names)
 
         if record_text:
             parsed = False
-            import io, ast
-            # 1️⃣ Try parsing as dict/JSON
+
+            # 1️⃣ Try dict/JSON input
             try:
                 data_dict = ast.literal_eval(record_text)
                 if isinstance(data_dict, dict):
-                    row_df = pd.DataFrame([data_dict], columns=feature_names)
+                    filtered_dict = {k: v for k, v in data_dict.items() if k in feature_names}
+                    missing_features = [f for f in feature_names if f not in filtered_dict]
+                    for f in missing_features:
+                        filtered_dict[f] = 0  # default missing numeric features
+                    row_df = pd.DataFrame([filtered_dict], columns=feature_names)
                     parsed = True
             except Exception:
                 pass
 
-            # 2️⃣ Try parsing as CSV (comma-separated)
+            # 2️⃣ Try CSV/TSV single row
             if not parsed:
                 try:
-                    row_df = pd.read_csv(io.StringIO(record_text), names=feature_names)
-                    parsed = True
-                except Exception:
-                    pass
+                    lines = [line.strip() for line in record_text.strip().splitlines() if line.strip()]
+                    if len(lines) == 1:
+                        sep = "\t" if "\t" in lines[0] else ","
+                        values = [v.strip() for v in lines[0].split(sep)]
+                        if len(values) >= len(feature_names):
+                            # Keep only last N values corresponding to model features
+                            numeric_values = values[-len(feature_names):]
+                            row_df = pd.DataFrame([numeric_values], columns=feature_names)
+                            parsed = True
+                        else:
+                            st.error(f"Not enough values to fill model features ({len(values)} provided, {len(feature_names)} required)")
+                    else:
+                        st.error("Multiple lines detected. Only single-row input is supported.")
+                except Exception as e:
+                    st.error("Failed to parse CSV/TSV record.")
+                    st.exception(e)
 
-            # 3️⃣ Try parsing as TSV (tab-separated)
             if not parsed:
-                try:
-                    row_df = pd.read_csv(io.StringIO(record_text), names=feature_names, sep="\t")
-                    parsed = True
-                except Exception:
-                    pass
+                st.error("Failed to parse the record. Make sure it's a valid single-row CSV, TSV, or dictionary format.")
 
-            if not parsed:
-                st.error("Failed to parse the record. Make sure it's a valid CSV, tab-separated, or dictionary format.")
+            # Convert numeric columns to float; keep categorical as string
+            if not row_df.empty:
+                for col in row_df.columns:
+                    try:
+                        row_df[col] = pd.to_numeric(row_df[col])
+                    except Exception:
+                        pass
 
-        # Show preview
-        if not row_df.empty:
-            with st.expander("Preview input DataFrame"):
-                st.dataframe(row_df)
+            # Preview
+            if not row_df.empty:
+                with st.expander("Preview input DataFrame"):
+                    st.dataframe(row_df)
 
     return row_df
+
 
 
 
