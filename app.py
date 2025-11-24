@@ -132,5 +132,31 @@ if run_button and uploaded_file:
 
     st.success("✅ Training and artifacts saved successfully")
 
+    files_to_download = [
+        model_file,
+        features_file,
+        config_file,
+        os.path.join(OUTPUT_DIR, 'HR_Attrition_Model_Week3_Results.png')
+    ]
+    
+    # 👉 PASTE HERE
+    import zipfile
+    
+    zip_path = os.path.join(OUTPUT_DIR, "training_outputs.zip")
+    
+    with zipfile.ZipFile(zip_path, 'w') as zipf:
+        for file in files_to_download:
+            if os.path.exists(file):
+                zipf.write(file, arcname=os.path.basename(file))
+    
+    with open(zip_path, "rb") as f:
+        st.download_button(
+            "📥 Download ALL Outputs (ZIP)",
+            data=f,
+            file_name="HR_Attrition_Outputs.zip"
+        )
+
+
+
 else:
     st.warning("Upload dataset and click Run to start training")
