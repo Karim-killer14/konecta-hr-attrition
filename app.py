@@ -41,47 +41,66 @@ def load_feature_list():
 
 def build_input_ui(feature_names):
     """
-    Create Streamlit widgets for all features OR allow pasting a record.
+    Create Streamlit widgets for feature input or allow pasting a record.
     Returns a single-row DataFrame in the correct column order.
     """
     st.subheader("Employee Information")
 
     # Let user choose input method
-    input_method = st.radio("Select input method:", ["Manual input", "Paste record (CSV/JSON/dict)"])
+    input_method = st.radio("Select input method:", ["Manual input", "Paste record (CSV/TSV/Dict)"])
 
     if input_method == "Manual input":
         input_data = {}
         for feat in feature_names:
-            # simple numeric inputs for everything
+            # numeric input by default; you can adapt types here
             input_data[feat] = st.number_input(feat, value=0.0)
         row_df = pd.DataFrame([input_data], columns=feature_names)
 
     else:  # Paste record
         record_text = st.text_area(
-            "Paste your record here (CSV row, JSON, or Python dict format):",
+            "Paste your record here (CSV row, Tab-separated row, or Python dict/JSON format):",
             height=150
         )
         row_df = pd.DataFrame(columns=feature_names)  # default empty
 
         if record_text:
+            parsed = False
+            import io, ast
+            # 1️⃣ Try parsing as dict/JSON
             try:
-                # Try parsing as JSON/dict first
-                import ast
                 data_dict = ast.literal_eval(record_text)
                 if isinstance(data_dict, dict):
                     row_df = pd.DataFrame([data_dict], columns=feature_names)
-                else:
-                    st.error("Record should be a dictionary (key: value pairs).")
+                    parsed = True
             except Exception:
+                pass
+
+            # 2️⃣ Try parsing as CSV (comma-separated)
+            if not parsed:
                 try:
-                    # Try parsing as CSV row
-                    import io
                     row_df = pd.read_csv(io.StringIO(record_text), names=feature_names)
-                except Exception as e:
-                    st.error("Failed to parse record. Make sure it's a CSV row or dictionary.")
-                    st.exception(e)
+                    parsed = True
+                except Exception:
+                    pass
+
+            # 3️⃣ Try parsing as TSV (tab-separated)
+            if not parsed:
+                try:
+                    row_df = pd.read_csv(io.StringIO(record_text), names=feature_names, sep="\t")
+                    parsed = True
+                except Exception:
+                    pass
+
+            if not parsed:
+                st.error("Failed to parse the record. Make sure it's a valid CSV, tab-separated, or dictionary format.")
+
+        # Show preview
+        if not row_df.empty:
+            with st.expander("Preview input DataFrame"):
+                st.dataframe(row_df)
 
     return row_df
+
 
 
 def main():
